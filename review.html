@@ -1,0 +1,44 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Source review · Composio</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f5f1;color:#192924;font:16px/1.5 'Inter',system-ui,sans-serif}main{max-width:900px;margin:auto;padding:28px 22px 60px}header,nav,.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}header{border-bottom:1px solid #bdc9c0;padding-bottom:16px}h1,h2,h3,p{margin:0 0 10px}h1{font:600 1.45rem Georgia,serif}h2{font:500 clamp(1.8rem,5vw,2.7rem) Georgia,serif}h3{font-size:1.06rem}nav{margin:20px 0}article{padding:clamp(18px,4vw,32px);background:white;border:1px solid #ced9d0;border-radius:12px}small,.muted{color:#486157}label{display:block;font-weight:600;margin-top:14px}input,textarea,select,button{font:inherit;color:inherit}input,textarea,select{width:100%;border:1px solid #99aaa0;border-radius:5px;padding:8px;background:#fff}nav select{width:auto;max-width:100%}textarea{min-height:65px}a{color:#075f47;overflow-wrap:anywhere}button{cursor:pointer;border:1px solid #48755f;border-radius:5px;padding:8px 14px;background:white}button.primary{color:white;background:#165a44}button:disabled{opacity:.6}section{margin-top:22px;border-top:1px solid #d7e0d9;padding-top:20px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:15px}.panel{background:#f2f6f1;padding:15px;border-radius:6px}ul{padding-left:22px}.bar{margin-top:22px}#status{min-height:1.5em;font-weight:600}progress{accent-color:#18674d;width:90px}select:focus,textarea:focus,input:focus,button:focus-visible{outline:3px solid #21754f;outline-offset:2px}@media(max-width:600px){.cols{grid-template-columns:1fr}}
+</style><main><header><h1>Source review</h1><div><strong id="count"></strong> <progress id="progress"></progress></div></header>
+<nav><select aria-label="Choose app" id="apps"></select><select aria-label="Choose check" id="fields"></select></nav>
+<article hidden id="card"><small id="app"></small><h2 id="title"></h2><p id="question"></p><p class="muted" id="draftNotice" hidden>AI-assisted draft. Check the linked source and confirm or edit the suggested grades.</p>
+<section><h3>Check the source</h3><p class="muted">Open a source to select it. You can also paste a better vendor URL.</p><ul id="links"></ul>
+<label for="url">Source you checked</label><input id="url" type="url" placeholder="https://…">
+<label for="answer">What did you find?</label><textarea id="answer" placeholder="One sentence from your reading of the docs"></textarea></section>
+<section><h3>Compare both answers</h3><p class="muted">Use “Incorrect” for a material error or omission. Use “Unresolved” when the docs cannot settle the claim.</p>
+<button id="reveal">Show model answers</button><div class="cols" id="models"></div></section>
+<label for="notes">Notes <small>(optional)</small></label><textarea id="notes" placeholder="What changed your judgment?"></textarea>
+<div class="bar"><button id="skip">Skip for now</button><button class="primary" id="save">Mark done &amp; next</button></div></article>
+<p id="status" role="status" aria-live="polite"></p></main>
+<script>
+const el=id=>document.getElementById(id),node=(tag,text)=>{const n=document.createElement(tag);n.textContent=text;return n};
+const questions={category_purpose:'What does this product do, and which category fits?',auth_methods:'Which credentials or authentication flows does this API accept?',commercial_access:'Can a developer get API access for free, on a trial, or only on a paid plan?',permissions_distribution:'Who can grant access, and what changes when distributing to other customers?',api_type:'What kind of API or interface is publicly documented?',api_breadth:'Which resources and actions does the interface actually cover?',existing_mcp:'Is an MCP server documented, who maintains it, and who can use it?',buildability_blocker:'Could a developer prototype this today? Which prerequisite matters most?'};
+let entries=[],i=0,shown=false,saving=false;
+const done=e=>Boolean(e.row.sol_grade&&e.row.astra_grade), draftKey=e=>'composio.review.v1.'+e.row.id+'.'+e.row.field;
+function values(){return {human_answer:el('answer').value,source_url:el('url').value,notes:el('notes').value,sol_grade:el('sol')?.value||'',astra_grade:el('astra')?.value||''}}
+function stash(){if(entries[i]&&!saving)localStorage.setItem(draftKey(entries[i]),JSON.stringify(values()))}
+function display(index){i=index; const e=entries[i],r=e.row,s=done(e)?null:e.suggestion;
+const cached=!done(e)&&JSON.parse(localStorage.getItem(draftKey(e))||'null');
+const d=cached&&Object.values(cached).some(Boolean)?{...r,...s,...cached}:{...r,...s};
+el('draftNotice').hidden=!s;
+el('card').hidden=false;el('apps').value=r.id;el('fields').replaceChildren();entries.forEach((x,j)=>{if(x.row.id===r.id)el('fields').add(new Option((done(x)?'✓ ':'')+x.label,j))});el('fields').value=i;
+const n=entries.filter(done).length;el('count').textContent=n+' / '+entries.length+' done';el('progress').max=entries.length;el('progress').value=n;
+el('app').textContent=r.app+(done(e)?(r.reviewer==='AI'?' · AI-reviewed':' · User-confirmed'):'');el('title').textContent=e.label;el('question').textContent=questions[r.field];el('url').value=d.source_url;el('answer').value=d.human_answer;el('notes').value=d.notes;
+el('links').replaceChildren();for(const url of new Set([r.source_url,s?.source_url,...(s?.additional_sources||[]),...e.sol.sources,...e.astra.sources].filter(Boolean))){let u;try{u=new URL(url)}catch{continue}if(!['https:','http:'].includes(u.protocol))continue;const a=node('a',u.hostname+u.pathname+(u.search||''));a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.onclick=()=>{el('url').value=url;stash()};const li=node('li','');li.append(a);el('links').append(li)}
+if(!el('links').children.length)el('links').append(node('li','No cited page. Find a vendor source and paste its URL below.'));
+el('models').replaceChildren();for(const [k,name] of [['sol','Sol · first pass'],['astra','Astra · final pass']]){const box=node('div','');box.className='panel';box.append(node('h3',name),node('p',e[k].answer));const label=node('label','Your grade');label.htmlFor=k;const select=node('select','');select.id=k;select.add(new Option('Choose a grade',''));for(const g of ['Correct','Incorrect','Unresolved'])select.add(new Option(g,g.toLowerCase()));select.value=d[k+'_grade'];select.onchange=stash;box.append(label,select);el('models').append(box)}
+shown=done(e)||!!d.sol_grade||!!d.astra_grade;el('models').style.display=shown?'grid':'none';el('reveal').hidden=shown;el('status').textContent='';
+}
+function next(){for(let offset=1;offset<=entries.length;offset++){const j=(i+offset)%entries.length;if(!done(entries[j]))return j}return i}
+for(const id of ['url','answer','notes'])el(id).oninput=stash;
+el('apps').onchange=()=>{stash();let j=entries.findIndex(e=>e.row.id===el('apps').value&&!done(e));display(j<0?entries.findIndex(e=>e.row.id===el('apps').value):j)};
+el('fields').onchange=()=>{stash();display(Number(el('fields').value))};
+el('reveal').onclick=()=>{el('models').style.display='grid';el('reveal').hidden=true;el('sol').focus()};
+el('skip').onclick=()=>{stash();display(next());el('title').scrollIntoView()};
+el('save').onclick=async()=>{const e=entries[i],v=values();if(!v.human_answer.trim()||!/^https?:\/\//i.test(v.source_url)||!v.sol_grade||!v.astra_grade){el('status').textContent='Add your finding, a source URL, and one grade for each model.';return}
+saving=true;for(const id of ['card','apps','fields'])el(id).inert=true;try{const res=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:[e.row.id,e.row.field],before:e.row,values:v})});const row=await res.json();if(!res.ok)throw Error(row.error);e.row=row;localStorage.removeItem(draftKey(e));display(next());el('status').textContent=entries.every(done)?'Review complete. All grades are saved and the case study is updated.':'Saved '+row.app+' · '+e.label+'. Case study updated.';window.scrollTo(0,0)}catch(err){el('status').textContent=err.message}finally{saving=false;for(const id of ['card','apps','fields'])el(id).inert=false}};
+fetch('/checks').then(r=>r.json()).then(data=>{entries=data;for(const e of new Map(entries.map(x=>[x.row.id,x])).values())el('apps').add(new Option(e.row.app,e.row.id));display(Math.max(0,entries.findIndex(e=>!done(e))))}).catch(()=>el('status').textContent='Could not load the review queue. Reload to retry.');
+</script></html>

@@ -1,0 +1,245 @@
+"""Render the study, its preregistered paired audit, and a machine-readable matrix."""
+
+import argparse
+import csv
+import hashlib
+import os
+from collections import Counter, defaultdict
+from html import escape
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from pipeline import FIELDS, load, save
+
+COLUMNS = [
+    "id",
+    "app",
+    "field",
+    "human_answer",
+    "source_url",
+    "sol_grade",
+    "astra_grade",
+    "notes",
+    "reviewer",
+]
+LABELS = dict(
+    zip(
+        FIELDS,
+        [
+            "Category and purpose",
+            "Authentication",
+            "Commercial access",
+            "Account and distribution permissions",
+            "API type",
+            "API breadth",
+            "Existing MCP",
+            "Build decision and blocker",
+        ],
+    )
+)
+
+
+def worksheet(out, manifest):
+    path = out / "human-review.csv"
+    sampled = [a for a in manifest["apps"] if a["id"] in manifest["sample"]]
+    expected = {(a["id"], a["app"], f) for a in sampled for f in FIELDS}
+    if not path.exists():
+        with path.open("x", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=COLUMNS)
+            writer.writeheader()
+            for app in sampled:
+                for field in FIELDS:
+                    writer.writerow(
+                        {"id": app["id"], "app": app["app"], "field": field}
+                    )
+    with path.open(newline="") as file:
+        rows = list(csv.DictReader(file))
+    full = {(a["id"], a["app"], f) for a in manifest["apps"] for f in FIELDS}
+    if {(r["id"], r["app"], r["field"]) for r in rows} == full:
+        expected = full
+    if (
+        len(rows) != len(expected)
+        or {(r["id"], r["app"], r["field"]) for r in rows} != expected
+    ):
+        raise ValueError(
+            "Audit sample changed; review the original manifest and worksheet."
+        )
+    done = []
+    for r in rows:
+        grades = [r["sol_grade"], r["astra_grade"]]
+        if not any(grades):
+            continue
+        if not all(
+            g in {"correct", "incorrect", "unresolved"} for g in grades
+        ) or not all(r[k].strip() for k in ["human_answer", "source_url"]):
+            raise ValueError(
+                "Both grades, human answer, and source required: "
+                + r["app"]
+                + " / "
+                + r["field"]
+            )
+        done.append(r)
+    return {
+        "planned": len(rows),
+        "apps": len({r["id"] for r in done}),
+        "grade_counts": {s: dict(Counter(r[s + "_grade"] for r in done)) for s in ("sol", "astra")},
+        "graded": len(done),
+        "ai_reviewed": sum(r.get("reviewer") == "AI" for r in done),
+        "user_confirmed": sum(r.get("reviewer") != "AI" for r in done),
+        "sol_correct": sum(r["sol_grade"] == "correct" for r in done),
+        "astra_correct": sum(r["astra_grade"] == "correct" for r in done),
+    }
+
+
+def source_link(url):
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname:
+        return escape(url)
+    return f'<a href="{escape(url, quote=True)}">{escape(parts.hostname or url)}</a>'
+
+
+def render(out):
+    manifest = load(out / "manifest.json")
+    audit = worksheet(out, manifest)
+    complete = []
+    phases = Counter()
+    category_gates = defaultdict(Counter)
+    reconciled = (out / "reconciliation" / "complete.json").exists()
+    for a in manifest["apps"]:
+        for stage in manifest["models"]:
+            p = out / "apps" / a["id"] / f"{stage}.json"
+            if p.exists():
+                phases[stage] += 1
+        p = out / "apps" / a["id"] / "astra.json"
+        if reconciled:
+            p = out / "reconciliation" / a["id"] / "reviewed.json"
+        if p.exists():
+            row = load(p)
+            complete.append(row)
+            category_gates[a["category"] or row["category"]][row["gate"]] += 1
+    decisions = Counter(r["decision"] for r in complete)
+    auth = Counter(a for r in complete for a in set(r["auth"]))
+    gates = Counter(r["gate"] for r in complete)
+    status = Counter(f["status"] for r in complete for f in r["fields"])
+    with (out / "human-review.csv").open(newline="") as stream:
+        checks = {(r["id"], r["field"]): r for r in csv.DictReader(stream) if r["astra_grade"]}
+    resolution = Counter()
+    if reconciled:
+        for row in complete:
+            for field in row["fields"]:
+                if checks[row["id"], field["field"]]["astra_grade"] == "unresolved":
+                    resolution[field["status"]] += 1
+        columns = ["id","app","category","auth","access_mode","gate","api_surface","mcp_availability","decision"]
+        temp_csv = out / f"classifications.{os.getpid()}.tmp"
+        with temp_csv.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns)
+            writer.writeheader()
+            for row in complete:
+                writer.writerow({key: " | ".join(row[key]) if isinstance(row[key], list) else row[key] for key in columns})
+        temp_csv.replace(out / "classifications.csv")
+    save(out / "matrix.json", complete)
+    save(
+        out / "summary.json",
+        {
+            "input": len(manifest["apps"]),
+            "complete": len(complete),
+            "stage_counts": dict(phases),
+            "decisions": decisions,
+            "auth": auth,
+            "gates": gates,
+            "field_status": status,
+            "category_gates": category_gates,
+            "audit": audit,
+            **({"previously_unresolved": dict(resolution)} if reconciled else {}),
+        },
+    )
+    rows = []
+    details = []
+    for r in complete:
+        fields = {f["field"]: f for f in r["fields"]}
+        name = escape(r["app"])
+        classifications = ""
+        if reconciled:
+            classifications = "".join(
+                f"<td>{escape(value)}</td>"
+                for value in (r["access_mode"], ", ".join(r["api_surface"]), r["mcp_availability"])
+            )
+        rows.append(
+            f'<tr><th><a href="#app-{r["id"]}">{name}</a></th><td>{escape(r["category"])}</td><td>{escape(", ".join(r["auth"]))}</td><td>{escape(r["gate"])}</td><td>{escape(r["decision"])}</td>{classifications}</tr>'
+        )
+        content = []
+        for k, f in fields.items():
+            links = " · ".join(source_link(s) for s in f["sources"])
+            check = checks.get((r["id"], k))
+            comparison = ""
+            if check:
+                comparison = (
+                    f"<p><b>Source check</b> · Sol {escape(check['sol_grade'])} · Astra {escape(check['astra_grade'])}"
+                    f"<br>{escape(check['human_answer'])} {source_link(check['source_url'])}</p>"
+                )
+            content.append(
+                f"<dt>{LABELS[k]} <small>{escape(f['status'])}</small></dt><dd>{escape(f['answer'])}<p>{escape(f['evidence'])} {links}</p>{comparison}</dd>"
+            )
+        details.append(
+            f'<details id="app-{r["id"]}"><summary>{name}</summary><dl>{"".join(content)}</dl><a href="apps/{r["id"]}/sol.json">Sol input judgment</a> · <a href="apps/{r["id"]}/luna.json">Luna verification</a> · <a href="apps/{r["id"]}/astra.json">Astra final</a></details>'
+        )
+
+    def counts(c):
+        return ", ".join(f"{escape(k)} ({n})" for k, n in c.most_common())
+
+    categories = "".join(
+        f"<li><b>{escape(cat)}</b> — {counts(c)}</li>"
+        for cat, c in sorted(category_gates.items())
+    )
+    measured = (
+        f"First pass {audit['sol_correct']}/{audit['graded']} correct. Final pass {audit['astra_correct']}/{audit['graded']} correct."
+        if audit["graded"]
+        else "Accuracy pending human review."
+    )
+    scope = ""
+    if audit["graded"] and audit["apps"] == len(manifest["apps"]):
+        scope = f"The source audit covers all {audit['apps']} apps. Unresolved grades count in each denominator. "
+        if (out / "full-audit" / "schema.json").exists():
+            scope += "GPT-6.2 Sol graded the additional checks against fresh public source excerpts. "
+    local_review = ('<a id="review" hidden href="http://127.0.0.1:8941/">Open source review</a> ' if out.resolve() == Path(__file__).resolve().parent / "studies/composio-100" else "")
+    patterns = ""
+    pattern_file = out / "cluster-summary.json"
+    if reconciled and pattern_file.exists() and (out / "clusters.html").exists():
+        result = load(pattern_file)
+        if result["input_sha256"] == hashlib.sha256((out / "classifications.csv").read_bytes()).hexdigest():
+            findings = "".join(f"<p><b>{escape(label)}.</b> {escape(text)}</p>" for label,text in result["findings"])
+            patterns = f'<h2>Patterns across the apps</h2>{findings}<p><a href="clusters.html">Explore the clusters and category breakdown</a></p>'
+    coverage_file = out / "toolkit-coverage.csv"
+    if coverage_file.exists():
+        with coverage_file.open(newline="") as stream:
+            coverage = list(csv.DictReader(stream))
+        gaps = [r for r in coverage if r["coverage"] == "No product match"]
+        mcp_only = sum(r["coverage"] == "MCP only" for r in coverage)
+        easy = [r["app"] for r in gaps if r["gate"] == "free self-serve" and r["decision"] == "prototype"]
+        patterns += (
+            f"<h2>Composio toolkit coverage</h2><p>{len(coverage)-len(gaps)} of {len(coverage)} apps have a matching toolkit in Composio’s catalog, "
+            f"including {mcp_only} available only through an MCP toolkit. Of the {len(gaps)} without a product match, "
+            f"{sum(r['decision']=='prototype' for r in gaps)} are ready to prototype. Free self-serve candidates: {escape(', '.join(easy))}.</p>"
+            '<p><a href="toolkit-coverage.csv">See all app matches and catalog evidence</a></p>'
+        )
+    html = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Integration research | Build decisions</title><style>
+*{{box-sizing:border-box}}body{{max-width:74rem;margin:0 auto;padding:2.5rem 4vw;color:#182a2a;background:#fafaf6;font:16px/1.5 system-ui,sans-serif}}h1,h2{{font-family:Georgia,serif;line-height:1.15}}h1{{font-size:clamp(2rem,5vw,3.8rem);margin:.25em 0}}a,summary{{color:#075d51}}summary{{cursor:pointer;font-weight:650}}table{{border-collapse:collapse;width:100%;margin:1rem 0}}td,th{{padding:.55rem;text-align:left;border-bottom:1px solid #c9d5cf}}.scroll{{overflow:auto}}details{{padding:.6rem 0;border-bottom:1px solid #c9d5cf}}dt{{font-weight:bold}}dd{{margin:.25rem 0 1rem}}small,dd p{{color:#465c54}}small{{font-weight:400}}h2{{margin-top:2rem}}input{{font:inherit;padding:.4rem}}:target{{outline:2px solid #168772}}
+</style><main><header><small>Integration research · {len(complete)} of {len(manifest["apps"])} apps through all stages</small><h1>Which integrations can a developer build today?</h1></header>
+<p><b>{decisions["prototype"]} ready to prototype · {decisions["conditional"]} conditional · {decisions["outreach"]} need outreach · {decisions["unknown"]} unresolved.</b></p>
+<p>Most frequently observed authentication methods: {counts(auth) or "pending"}. An app may have several.</p><p>Primary credential-access conditions: {counts(gates) or "pending"}.</p>
+<details><summary>Access conditions by category</summary><ul>{categories}</ul></details>
+{patterns}<h2>Decisions</h2><label>Find an app <input id="filter" type="search"></label><div class="scroll"><table><thead><tr><th>App</th><th>Category</th><th>Authentication</th><th>Primary access condition</th><th>Decision</th>{"<th>Access mode</th><th>API surface</th><th>MCP availability</th>" if reconciled else ""}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>
+<h2>Research and verification</h2><p>Composio’s Python SDK supplies connector metadata and developer-doc URLs. Local Scrapling in Podman discovers web results, reopens cited pages, renders thin JavaScript pages when possible, and records excerpts and fetch failures. Sol drafts eight field judgments per app. Luna checks them with fresh access and deprecation evidence. Astra judges the final rows using both prior passes and an additional MCP and distribution search. Each model uses medium reasoning. Every field retains its evidence or an explicit uncertainty.</p>
+<p>{"The matrix uses the reconciled classifications. Grades below apply to the original passes. " if reconciled else ""}{scope}{measured} {audit["graded"]}/{audit["planned"]} paired fields graded ({audit["ai_reviewed"]} AI-reviewed, {audit["user_confirmed"]} user-confirmed). Field evidence labels: {counts(status) or "pending"}.</p>
+<p>{'<a href="classifications.csv">Download app classifications</a> · ' if reconciled else ''}{local_review}<a href="human-review.csv">Download audit CSV</a> · <a href="matrix.json">Machine-readable results</a> · <a href="manifest.json">Run configuration and sample</a></p>
+<h2>Evidence by app</h2>{"".join(details)}</main><script>if(location.protocol==='file:'&&document.getElementById('review'))document.getElementById('review').hidden=false;const filter=document.querySelector('#filter');filter.oninput=()=>document.querySelectorAll('tbody tr').forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(filter.value.toLowerCase()));function openTarget(){{const t=document.getElementById(location.hash.slice(1));if(t?.tagName==='DETAILS')t.open=true}}addEventListener('hashchange',openTarget);openTarget();</script></html>"""
+    temp = out / f"index.{os.getpid()}.tmp"
+    temp.write_text(html)
+    temp.replace(out / "index.html")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("study", type=Path)
+    render(parser.parse_args().study)

@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+# The upstream image is pinned to the version underneath the original workstation image.
+exec podman run --rm -i --pull=missing --cap-drop=ALL --security-opt=no-new-privileges \
+  --memory=3g --cpus=2 --pids-limit=512 --shm-size=512m \
+  --entrypoint /app/.venv/bin/python \
+  docker.io/pyd4vinci/scrapling@sha256:5ed7aeef430515fd35f3d97f482da73fb1d519dc17b6cb28ea366869c8642d98 \
+  -c 'from scrapling.core.ai import ScraplingMCPServer; ScraplingMCPServer().serve(http=False, host="127.0.0.1", port=8000)'

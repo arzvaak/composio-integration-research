@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir=$(cd -- "$(dirname -- "$0")" && pwd)
+if (( $# == 0 )); then
+  set -- "$project_dir/apps.csv"
+fi
+exec uv run --no-project --python 3.13 --with-requirements "$project_dir/requirements.lock" "$project_dir/pipeline.py" "$@"
