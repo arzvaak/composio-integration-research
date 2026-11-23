@@ -199,12 +199,28 @@ def render(out):
         )
 
     def counts(c):
-        return ", ".join(f"{escape(k)} ({n})" for k, n in c.most_common())
+        return ", ".join(f"{escape(k)} ({n})" for k, n in c.most_common() if k != "unknown")
 
-    categories = "".join(
-        f"<li><b>{escape(cat)}</b> — {counts(c)}</li>"
-        for cat, c in sorted(category_gates.items())
-    )
+    def findings(rows, field, label):
+        if not rows:
+            return ""
+        items = []
+        for row in rows:
+            result = next(f for f in row["fields"] if f["field"] == field)
+            links = " · ".join(source_link(url) for url in result["sources"])
+            items.append(f'<li><a href="#app-{escape(row["id"])}">{escape(row["app"])}</a> — {escape(result["answer"])} {links}</li>')
+        return f"<details><summary>{label} ({len(rows)} apps)</summary><ul>{''.join(items)}</ul></details>"
+
+    open_gates = [row for row in complete if row["gate"] == "unknown"]
+    open_auth = [row for row in complete if "unknown" in row["auth"]]
+    gate_notes = findings(open_gates, "commercial_access", "Credential requirements needing clarification")
+    auth_notes = findings(open_auth, "auth_methods", "Authentication findings with open questions")
+    app_categories = {a["id"]: a["category"] for a in manifest["apps"]}
+    categories = ""
+    for cat, c in sorted(category_gates.items()):
+        pending = [r for r in open_gates if (app_categories[r["id"]] or r["category"]) == cat]
+        notes = findings(pending, "commercial_access", "Read the credential findings")
+        categories += f"<li><b>{escape(cat)}</b> — {counts(c) or 'See findings below'}{notes}</li>"
     measured = (
         f"First pass {audit['sol_correct']}/{audit['graded']} correct. Final pass {audit['astra_correct']}/{audit['graded']} correct."
         if audit["graded"]
@@ -241,11 +257,11 @@ def render(out):
 *{{box-sizing:border-box}}body{{max-width:74rem;margin:0 auto;padding:2.5rem 4vw;color:#182a2a;background:#fafaf6;font:16px/1.5 system-ui,sans-serif}}h1,h2{{font-family:Georgia,serif;line-height:1.15}}h1{{font-size:clamp(2rem,5vw,3.8rem);margin:.25em 0}}a,summary{{color:#075d51}}summary{{cursor:pointer;font-weight:650}}table{{border-collapse:collapse;width:100%;margin:1rem 0}}td,th{{padding:.55rem;text-align:left;border-bottom:1px solid #c9d5cf}}.scroll{{overflow:auto}}details{{padding:.6rem 0;border-bottom:1px solid #c9d5cf}}dt{{font-weight:bold}}dd{{margin:.25rem 0 1rem}}small,dd p{{color:#465c54}}small{{font-weight:400}}h2{{margin-top:2rem}}input{{font:inherit;padding:.4rem}}:target{{outline:2px solid #168772}}
 </style><main><header><small>Integration research · {len(complete)} of {len(manifest["apps"])} apps through all stages</small><h1>Which integrations can a developer build today?</h1></header>
 <p><b>{decisions["prototype"]} ready to prototype · {decisions["conditional"]} conditional · {decisions["outreach"]} need outreach · {decisions["unknown"]} unresolved.</b></p>
-<p>Most frequently observed authentication methods: {counts(auth) or "pending"}. An app may have several.</p><p>Primary credential-access conditions: {counts(gates) or "pending"}.</p>
+<p>Most frequently observed authentication methods: {counts(auth) or "pending"}. An app may have several.</p>{auth_notes}<p>Primary credential-access conditions: {counts(gates) or "pending"}.</p>{gate_notes}
 <details><summary>Access conditions by category</summary><ul>{categories}</ul></details>
 {patterns}<h2>Decisions</h2><label>Find an app <input id="filter" type="search"></label><div class="scroll"><table><thead><tr><th>App</th><th>Category</th><th>Authentication</th><th>Primary access condition</th><th>Decision</th>{"<th>Access mode</th><th>API surface</th><th>MCP availability</th>" if reconciled else ""}</tr></thead><tbody>{"".join(rows)}</tbody></table></div>
 <h2>Research and verification</h2><p>Composio’s Python SDK supplies connector metadata and developer-doc URLs. Local Scrapling in Podman discovers web results, reopens cited pages, renders thin JavaScript pages when possible, and records excerpts and fetch failures. Sol drafts eight field judgments per app. Luna checks them with fresh access and deprecation evidence. Astra judges the final rows using both prior passes and an additional MCP and distribution search. Each model uses medium reasoning. Every field retains its evidence or an explicit uncertainty.</p>
-<p>{"The matrix uses the reconciled classifications. Grades below apply to the original passes. " if reconciled else ""}{scope}{measured} {audit["graded"]}/{audit["planned"]} paired fields graded ({audit["ai_reviewed"]} AI-reviewed, {audit["user_confirmed"]} user-confirmed). Field evidence labels: {counts(status) or "pending"}.</p>
+<p>{"The matrix uses the reconciled classifications. Grades below apply to the original passes. " if reconciled else ""}{scope}{measured} {audit["graded"]}/{audit["planned"]} paired fields graded ({audit["ai_reviewed"]} AI-reviewed, {audit["user_confirmed"]} user-confirmed). Field evidence labels: {counts(status) or "pending"}. Fields without an established answer: {status["unknown"]}.</p>
 <p>{'<a href="classifications.csv">Download app classifications</a> · ' if reconciled else ''}{local_review}<a href="human-review.csv">Download audit CSV</a> · <a href="matrix.json">Machine-readable results</a> · <a href="manifest.json">Run configuration and sample</a></p>
 <h2>Evidence by app</h2>{"".join(details)}</main><script>if(location.protocol==='file:'&&document.getElementById('review'))document.getElementById('review').hidden=false;const filter=document.querySelector('#filter');filter.oninput=()=>document.querySelectorAll('tbody tr').forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(filter.value.toLowerCase()));function openTarget(){{const t=document.getElementById(location.hash.slice(1));if(t?.tagName==='DETAILS')t.open=true}}addEventListener('hashchange',openTarget);openTarget();</script></html>"""
     temp = out / f"index.{os.getpid()}.tmp"
