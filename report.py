@@ -230,8 +230,6 @@ def render(out):
     scope = ""
     if audit["graded"] and audit["apps"] == len(manifest["apps"]):
         scope = f"The source audit covers all {audit['apps']} apps. Unresolved grades count in each denominator. "
-        if (out / "full-audit" / "schema.json").exists():
-            scope += "GPT-6.2 Sol graded the additional checks against fresh public source excerpts. "
     patterns = ""
     pattern_file = out / "cluster-summary.json"
     if reconciled and pattern_file.exists():

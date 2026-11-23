@@ -20,7 +20,7 @@ I ran three passes at medium reasoning:
 2. **GPT-6 Luna** checked Sol’s answers against the cited pages and searched for plan restrictions, sandbox access and deprecated features.
 3. **GPT-6.2 Astra** reviewed both passes and checked MCP ownership, distribution rules and approval requirements. The pipeline checked the app identity, the eight required fields and whether the cited URLs appeared in that app’s source packet.
 
-I originally selected ten apps for the audit, one per category. I expanded it to all 100 and manually reviewed the completed results one app at a time. For the field-level comparison, the audit saved a finding, a source, a reviewer and a grade for each original Sol and Astra answer. Sol also served as an automated grader. I kept unresolved grades in the denominator and froze the original answers before reconciliation so later corrections wouldn’t inflate the scores.
+I originally selected ten apps for the audit, one per category. I expanded it to all 100 and manually reviewed the completed results one app at a time. For the field-level comparison, the audit saved a finding, a source, a reviewer and a grade for each original Sol and Astra answer. I kept unresolved grades in the denominator and froze the original answers before reconciliation so later corrections wouldn’t inflate the scores.
 
 ## Run it on another list
 
