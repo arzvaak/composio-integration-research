@@ -70,5 +70,5 @@ Fresh runs use current vendor pages, model responses and the live Composio catal
 | `reconciliation/<id>/` | Follow-up sources, correction prompt, model response and revised app row |
 | `index.html`, `matrix.json`, `summary.json`, `classifications.csv` | Case study, final answers, counts and categorical data |
 | `errors.json` | Batch failures still open at the end of the run |
-| `clusters.csv`, `clusters.html` | Cluster assignments, representative apps and access patterns |
+| `clusters.csv`, `index.html#clusters` | Cluster assignments, representative apps and access patterns |
 | `toolkit-coverage.csv` | Matches against the Composio toolkit catalog |

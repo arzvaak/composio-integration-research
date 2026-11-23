@@ -261,7 +261,7 @@ def main(study):
         ],
         [
             "Category access",
-            f"{easy_cat} has the highest self-serve share ({easy_counts['self-serve']}/{easy_counts.total()}). {gated_cat} has the highest explicitly gated share ({gated_counts['gated']}/{gated_counts.total()}); {gated_counts['self-serve']} are self-serve. Mixed and unknown routes are counted separately.",
+            f"{easy_cat} has the highest self-serve share ({easy_counts['self-serve']}/{easy_counts.total()}). {gated_cat} has the highest explicitly gated share ({gated_counts['gated']}/{gated_counts.total()}); {gated_counts['self-serve']} are self-serve. The category table separates apps with multiple access routes from those whose docs leave credential issuance open.",
         ],
         [
             "Most common documented blocker",
@@ -286,10 +286,6 @@ def main(study):
         ).hexdigest(),
         "findings": findings,
     }
-    (study / "cluster-summary.json").write_text(
-        json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
-    )
-    insights = "".join(f"<p><b>{e(k)}.</b> {e(v)}</p>" for k, v in findings)
     category_table = "".join(
         "<tr>"
         + f"<th>{e(category)}</th>"
@@ -299,15 +295,16 @@ def main(study):
         + "</tr>"
         for category, counts in category_counts.items()
     )
-    body = f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Integration profile clusters</title><style>body{{font:16px/1.5 system-ui;color:#19302c;max-width:68rem;margin:2rem auto;padding:0 1rem}}table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ccc;padding:.45rem;text-align:left}}a{{color:#075d51}}section{{overflow:auto}}h1,h2{{font-family:Georgia,serif}}</style><main><a href="index.html">Case study</a><h1>Which apps have similar integration requirements?</h1>
-<p>{len(rows)} apps · {len(d)} with evidence for at least two feature blocks. <a href="clusters.csv">Download both assignments for every app</a>.</p>
-{insights}<details><summary>Access counts for all categories</summary><table><tr><th>Category</th><th>Self-serve</th><th>Gated</th><th>Mixed</th><th>Unknown</th></tr>{category_table}</table></details><h2>Method comparison</h2><p><b>K-medoids (PAM)</b> {grade(partition)}</p><p><b>HDBSCAN</b> {grade(dense)}</p>
+    body = f"""<p>{len(d)} of {len(rows)} apps had enough evidence to compare.</p><details><summary>Access counts for all categories</summary><table><tr><th>Category</th><th>Self-serve</th><th>Gated</th><th>Mixed</th><th>Credential issuance unclear (<a href="#access-findings">see findings</a>)</th></tr>{category_table}</table></details><h2>Method comparison</h2><p><b>K-medoids (PAM)</b> {grade(partition)}</p><p><b>HDBSCAN</b> {grade(dense)}</p>
 <p>PAM gives each eligible app a comparison group. HDBSCAN finds dense groups and marks other profiles as noise. The silhouette measures separation among assigned apps. Coverage matters when comparing these scores. The median adjusted Rand index (ARI) measures how closely assignments repeat across 25 seeded 80% subsamples; higher values mean greater stability.</p>
 <h2>Groups and representative apps</h2><section><table><thead><tr><th>Method</th><th>Group</th><th>Apps</th><th>Medoid</th><th>Most common credential gate</th><th>Most common access mode</th><th>Near the medoid</th></tr></thead><tbody>{"".join(groups)}</tbody></table></section>
 <h2>How similarity was measured</h2><p>Four equally weighted blocks describe authentication, API surface, access conditions and documented MCP availability. Set-valued fields use Jaccard distance. REST and generic HTTP share one family. Access mode and credential gate split one block. Unknown or unverified values are skipped pairwise; no comparable block gives maximum distance. App name, business category, build verdict and audit grades are held out.</p>
 <p>We selected the highest silhouette within each method. For HDBSCAN we preferred settings assigning at least half the eligible apps. The table gives minimum cluster size / minimum samples for HDBSCAN and number of groups for PAM. Cluster numbers are local to each method. Results describe this curated list.</p>
-<details><summary>All parameter settings</summary><table><tr><th>Method</th><th>Setting</th><th>Groups</th><th>Assigned</th><th>Silhouette</th></tr>{comparison}</table></details></main></html>"""
-    (study / "clusters.html").write_text(body)
+<details><summary>All parameter settings</summary><table><tr><th>Method</th><th>Setting</th><th>Groups</th><th>Assigned</th><th>Silhouette</th></tr>{comparison}</table></details>"""
+    summary["method_html"] = body
+    (study / "cluster-summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n"
+    )
     print("PAM", partition[1], grade(partition))
     print("HDBSCAN", dense[1] if dense else "", grade(dense))
 
