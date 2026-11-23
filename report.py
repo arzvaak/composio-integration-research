@@ -238,8 +238,14 @@ def render(out):
         result = load(pattern_file)
         if result["input_sha256"] == hashlib.sha256((out / "classifications.csv").read_bytes()).hexdigest():
             pattern_text = "".join(f"<p><b>{escape(label)}.</b> {escape(text)}</p>" for label,text in result["findings"])
+            headline_patterns = []
+            for label, explanation in result["findings"]:
+                if label in ("Authentication", "Category access", "Most common documented blocker", "What clustering adds"):
+                    sentences = explanation.split(". ")
+                    count = 2 if label in ("Category access", "What clustering adds") else 1
+                    headline_patterns.append(f"<p><b>{escape(label)}.</b> {escape('. '.join(sentences[:count]).rstrip('.'))}.</p>")
             methods = result.get("method_html", "")
-            patterns = f'<section id="clusters"><h2>Patterns across the apps</h2>{pattern_text}<details><summary>Compare clustering methods and category counts</summary>{methods}</details></section>'
+            patterns = f'<section id="clusters"><h2>Patterns across the apps</h2>{"".join(headline_patterns)}<details><summary>Full findings, outreach list and cluster comparison</summary>{pattern_text}{methods}</details></section>'
     shortlist = ""
     coverage_file = out / "toolkit-coverage.csv"
     if coverage_file.exists():
@@ -251,16 +257,20 @@ def render(out):
         if easy:
             shortlist = f"<p><b>First integrations to prototype:</b> {escape(', '.join(easy))}. Each documents free self-serve access and lacks a matching toolkit in the catalog snapshot.</p>"
         patterns += (
-            f"<h2>Composio toolkit coverage</h2><p>{len(coverage)-len(gaps)} of {len(coverage)} apps have a matching toolkit in Composio’s catalog, "
+            f"<details><summary>Composio toolkit coverage</summary><p>{len(coverage)-len(gaps)} of {len(coverage)} apps have a matching toolkit in Composio’s catalog, "
             f"including {mcp_only} available only through an MCP toolkit. Of the {len(gaps)} without a product match, "
-            f"{sum(r['decision']=='prototype' for r in gaps)} are ready to prototype. Free self-serve candidates: {escape(', '.join(easy))}.</p>"
+            f"{sum(r['decision']=='prototype' for r in gaps)} are ready to prototype. Free self-serve candidates: {escape(', '.join(easy))}.</p></details>"
 
         )
+    final_fields = {(r["id"], f["field"]): f for r in complete for f in r["fields"]}
     examples = []
     for before, after in [("incorrect", "correct"), ("incorrect", "incorrect")]:
         check = next((v for v in checks.values() if v["reviewer"] == "User" and (v["sol_grade"], v["astra_grade"]) == (before, after)), None)
         if check:
-            examples.append(f'<p><b>{escape(check["app"])} · {escape(LABELS[check["field"]])}</b> (Sol {before}, Astra {after}). {escape(check["human_answer"])} {source_link(check["source_url"])}</p>')
+            finding = final_fields.get((check["id"], check["field"]), {}) if reconciled else {}
+            answer = finding.get("answer", check["human_answer"])
+            source = next(iter(finding.get("sources", [])), check["source_url"])
+            examples.append(f'<p><b>{escape(check["app"])} · {escape(LABELS[check["field"]])}</b> (Sol {before}, Astra {after}). {escape(answer)} {source_link(source)}</p>')
     accuracy = ""
     if audit["graded"]:
         accuracy = f"Sol {audit['sol_correct']/audit['graded']:.1%} → Astra {audit['astra_correct']/audit['graded']:.1%} correct."
@@ -272,11 +282,12 @@ def render(out):
 </style><main><header><small>Integration research · {len(complete)} of {len(manifest["apps"])} apps through all stages</small><h1>Which integrations can a developer build today?</h1></header>
 <p><b>{decisions["prototype"]} ready to prototype · {decisions["conditional"]} conditional · {decisions["outreach"]} need outreach · {decisions["unknown"]} unresolved.</b></p>
 {shortlist}{patterns}
-<h2>How the research was checked</h2><p><b>{accuracy}</b></p><p>Composio’s Python SDK supplies connector metadata and developer-doc URLs. Local Scrapling in Podman discovers web results, reopens cited pages, renders thin JavaScript pages when possible, and records excerpts and fetch failures. Sol drafts eight field judgments per app. Luna checks them with fresh access and deprecation evidence. Astra judges the final rows using both prior passes and an additional MCP and distribution search. Each model uses medium reasoning. Every field retains its evidence or an explicit uncertainty.</p>
-<p>{"The matrix uses the reconciled classifications. Grades apply to the original passes. " if reconciled else ""}{scope}{measured} {audit["graded"]}/{audit["planned"]} paired fields graded ({audit["ai_reviewed"]} AI-reviewed, {audit["user_confirmed"]} user-confirmed). Field evidence labels: {counts(status) or "pending"}. Fields without an established answer: {status["unknown"]}.</p>
+<h2>How the research was checked</h2><p>The pipeline uses the Composio SDK to find developer docs and Scrapling to open them. Sol drafts eight answers per app, Luna checks restrictions, and Astra revises the answers against vendor evidence.</p>
+<p><b>{accuracy}</b> Across {audit["graded"]} paired checks, {audit["ai_reviewed"]} were AI-graded and {audit["user_confirmed"]} were user-confirmed. Both passes use the same denominator, including unresolved checks.</p>
+<details><summary>Scoring details and evidence quality</summary><p>{"The matrix uses the reconciled classifications. Grades apply to the original passes. " if reconciled else ""}{scope}{measured} {audit["graded"]}/{audit["planned"]} paired fields graded ({audit["ai_reviewed"]} AI-reviewed, {audit["user_confirmed"]} user-confirmed). Field evidence labels: {counts(status) or "pending"}. Fields without an established answer: {status["unknown"]}.</p></details>
 {"".join(examples)}
 <p><a href="https://github.com/arzvaak/composio-integration-research">Source and setup</a> · Run <code>./run apps.csv</code> to research the list.</p>
-<p>Most frequently observed authentication methods: {counts(auth) or "pending"}. An app may have several.</p>{auth_notes}<p>Primary credential-access conditions: {counts(gates) or "pending"}.</p>{gate_notes}
+<details><summary>Authentication and credential counts</summary><p>Most frequently observed authentication methods: {counts(auth) or "pending"}. An app may have several.</p>{auth_notes}<p>Primary credential-access conditions: {counts(gates) or "pending"}.</p>{gate_notes}</details>
 <div id="access-findings">{access_questions}</div><details><summary>Access conditions by category</summary><ul>{categories}</ul></details>
 <h2>Decisions</h2><label>Find an app <input id="filter" type="search"></label><div class="scroll"><table><thead><tr><th>App</th><th>Category</th><th>Authentication</th><th>Primary access condition</th><th>Decision</th>{"<th>Access mode</th><th>API surface</th><th>MCP availability</th>" if reconciled else ""}</tr></thead><tbody id="apps">{"".join(rows)}</tbody></table></div>
 <h2>Evidence by app</h2>{"".join(details)}</main><script type="application/json" id="matrix-data">{machine_data}</script><script>const filter=document.querySelector('#filter');filter.oninput=()=>document.querySelectorAll('#apps tr').forEach(r=>r.hidden=!r.textContent.toLowerCase().includes(filter.value.toLowerCase()));function openTarget(){{const t=document.getElementById(location.hash.slice(1));if(t?.tagName==='DETAILS')t.open=true}}addEventListener('hashchange',openTarget);openTarget();</script></html>"""
