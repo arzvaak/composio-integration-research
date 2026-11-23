@@ -158,14 +158,28 @@ def render(out):
     for r in complete:
         fields = {f["field"]: f for f in r["fields"]}
         name = escape(r["app"])
+        def reviewed_cell(value, field):
+            values = value if isinstance(value, list) else [value]
+            if not reconciled or "unknown" not in values:
+                return escape(", ".join(values))
+            finding = fields[field]
+            sources = " · ".join(source_link(url) for url in finding["sources"])
+            known = [v for v in values if v != "unknown"]
+            prefix = escape(", ".join(known)) + ". " if known else ""
+            return f"{prefix}{escape(finding['answer'])} <small>{sources}</small>"
+
+        gate = reviewed_cell(r["gate"], "commercial_access")
+        auth_cell = reviewed_cell(r["auth"], "auth_methods")
+        verdict = reviewed_cell(r["decision"], "buildability_blocker")
         classifications = ""
         if reconciled:
-            classifications = "".join(
-                f"<td>{escape(value)}</td>"
-                for value in (r["access_mode"], ", ".join(r["api_surface"]), r["mcp_availability"])
-            )
+            access = reviewed_cell(r["access_mode"], "commercial_access")
+            if r["gate"] == r["access_mode"] == "unknown":
+                access = "See credential finding"
+            surface = reviewed_cell(r["api_surface"], "api_type")
+            classifications = f"<td>{access}</td><td>{surface}</td><td>{escape(r['mcp_availability'])}</td>"
         rows.append(
-            f'<tr><th><a href="#app-{r["id"]}">{name}</a></th><td>{escape(r["category"])}</td><td>{escape(", ".join(r["auth"]))}</td><td>{escape(r["gate"])}</td><td>{escape(r["decision"])}</td>{classifications}</tr>'
+            f'<tr><th><a href="#app-{r["id"]}">{name}</a></th><td>{escape(r["category"])}</td><td>{auth_cell}</td><td>{gate}</td><td>{verdict}</td>{classifications}</tr>'
         )
         content = []
         for k, f in fields.items():
